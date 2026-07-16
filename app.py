@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import os
 import random
@@ -20,6 +21,8 @@ logger = logging.getLogger("pixel-game")
 CURRENT_PRIZE = "$10 Amazon Gift Card"
 GRID_SIZE = 50  # Example: 50 generates a 50x50 grid. Set 100 for 100x100!
 MAX_DAILY_CLICKS = 1
+DAILY_ENIGMA = "Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)"
+LED_SLOTS = 10  # sponsor LED spots around the grid
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -70,6 +73,30 @@ def init_db():
         for column, definition in (("email", "TEXT"), ("google_id", "TEXT")):
             if column not in existing:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+
+        # Sponsor LED slots: owner is NULL until someone buys the spot
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS leds (
+                slot INTEGER PRIMARY KEY,
+                color TEXT NOT NULL,
+                owner_username TEXT,
+                owner_google_id TEXT
+            )
+        """)
+        colors = ["gold", "azure", "violet"]
+        for slot in range(LED_SLOTS):
+            conn.execute(
+                "INSERT OR IGNORE INTO leds (slot, color) VALUES (?, ?)",
+                (slot, colors[slot % len(colors)]),
+            )
+
+
+def get_leds(conn):
+    rows = conn.execute("SELECT slot, color, owner_username FROM leds ORDER BY slot").fetchall()
+    return [
+        {"slot": r["slot"], "color": r["color"], "owner": r["owner_username"]}
+        for r in rows
+    ]
 
 
 def generate_ref_code(ip):
@@ -127,11 +154,14 @@ def index():
 
         user = reset_daily_clicks(conn, user, ip)
         clicks_left = max(user["max_clicks"] - user["clicks_today"], 0)
+        leds = get_leds(conn)
 
     return render_template(
         "index.html",
         grid_size=GRID_SIZE,
         current_prize=CURRENT_PRIZE,
+        daily_enigma=DAILY_ENIGMA,
+        leds_json=json.dumps(leds),
         clicks_left=clicks_left,
         ref_code=user["ref_code"],
         user_email=session.get("email", ""),

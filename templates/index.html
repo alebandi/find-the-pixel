@@ -10,12 +10,13 @@
       data-ref-code="{{ ref_code }}"
       data-clicks-left="{{ clicks_left }}"
       data-user-email="{{ user_email }}"
-      data-prize="{{ current_prize }}">
+      data-prize="{{ current_prize }}"
+      data-leds="{{ leds_json }}">
   <h1>Find the Winning Pixel</h1>
 
   <div id="enigma-box">
     <h2>🧠 DAILY ENIGMA</h2>
-    <p id="enigma-text">Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)</p>
+    <p id="enigma-text">{{ daily_enigma }}</p>
   </div>
 
   <div id="status-bar">

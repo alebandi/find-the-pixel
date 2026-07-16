@@ -40,30 +40,34 @@ function hideTooltip() {
   tooltip.style.display = 'none';
 }
 
-/* --- Sponsor LED frame (LEDs flow naturally in flex rows/columns) --- */
-const SPONSOR_LEDS = [
-  { color: 'gold',   sponsor: '@user_tiktok',   slot: 'led-row-top' },
-  { color: 'azure',  sponsor: '@pixel_master',  slot: 'led-row-top' },
-  { color: 'violet', sponsor: '@neon_gamer',    slot: 'led-row-top' },
-  { color: 'azure',  sponsor: '@grid_hunter',   slot: 'led-col-right' },
-  { color: 'gold',   sponsor: '@lucky_clicker', slot: 'led-col-right' },
-  { color: 'violet', sponsor: '@enigma_solver', slot: 'led-row-bottom' },
-  { color: 'gold',   sponsor: '@daily_winner',  slot: 'led-row-bottom' },
-  { color: 'azure',  sponsor: '@blue_pixel',    slot: 'led-row-bottom' },
-  { color: 'violet', sponsor: '@viral_violet',  slot: 'led-col-left' },
-  { color: 'gold',   sponsor: '@gold_rush',     slot: 'led-col-left' }
+/* --- Sponsor LED frame (state comes from the database via data-leds) --- */
+const LED_SLOT_CONTAINERS = [
+  'led-row-top', 'led-row-top', 'led-row-top',
+  'led-col-right', 'led-col-right',
+  'led-row-bottom', 'led-row-bottom', 'led-row-bottom',
+  'led-col-left', 'led-col-left'
 ];
 
-SPONSOR_LEDS.forEach((item) => {
+const LEDS = JSON.parse(document.body.dataset.leds || '[]');
+
+LEDS.forEach((item, i) => {
   const led = document.createElement('div');
-  led.className = 'led ' + item.color;
-  led.dataset.sponsor = item.sponsor;
-  document.getElementById(item.slot).appendChild(led);
+  led.className = 'led ' + item.color + (item.owner ? ' owned' : ' free');
+  if (item.owner) {
+    led.dataset.owner = item.owner;
+  }
+  const containerId = LED_SLOT_CONTAINERS[i % LED_SLOT_CONTAINERS.length];
+  document.getElementById(containerId).appendChild(led);
 });
 
 gridWrapper.addEventListener('mousemove', (e) => {
   if (e.target.classList.contains('led')) {
-    showTooltip('✨ Sponsor: ' + e.target.dataset.sponsor, e.clientX, e.clientY);
+    const owner = e.target.dataset.owner;
+    if (owner) {
+      showTooltip('✨ Sponsor: @' + owner.replace(/^@/, ''), e.clientX, e.clientY);
+    } else {
+      showTooltip('Space Available - Buy now!', e.clientX, e.clientY);
+    }
   } else if (e.target.classList.contains('pixel')) {
     showTooltip('X: ' + e.target.dataset.x + ', Y: ' + e.target.dataset.y, e.clientX, e.clientY);
   } else {
