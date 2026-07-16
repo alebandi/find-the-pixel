@@ -82,6 +82,15 @@
       line-height: 1.5;
     }
 
+    /* Counter + user bar */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
     #counter {
       background-color: var(--panel);
       border: 1px solid var(--border);
@@ -92,6 +101,20 @@
 
     #counter strong {
       color: var(--accent);
+    }
+
+    #user-info {
+      font-size: 0.85rem;
+      opacity: 0.8;
+    }
+
+    #user-info a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    #user-info a:hover {
+      text-decoration: underline;
     }
 
     #message {
@@ -147,7 +170,7 @@
       box-shadow: 0 0 8px var(--violet);
     }
 
-    /* Responsive centered 50x50 grid */
+    /* Responsive centered grid (size driven by GRID_SIZE from Python) */
     #grid {
       display: grid;
       width: 100%;
@@ -190,22 +213,24 @@
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
-    /* Out-of-clicks popup */
-    #overlay {
+    /* Modal overlays (blurred dark backdrop) */
+    .overlay {
       position: fixed;
       inset: 0;
-      background-color: rgba(0, 0, 0, 0.7);
+      background-color: rgba(2, 6, 23, 0.65);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
       display: none;
       align-items: center;
       justify-content: center;
       z-index: 100;
     }
 
-    #overlay.visible {
+    .overlay.visible {
       display: flex;
     }
 
-    #popup {
+    .modal {
       background-color: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
@@ -219,12 +244,12 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     }
 
-    #popup h2 {
+    .modal h2 {
       font-size: 1.2rem;
       font-weight: 600;
     }
 
-    #popup p {
+    .modal p {
       font-size: 0.95rem;
       line-height: 1.5;
     }
@@ -254,6 +279,8 @@
       font-size: 0.9rem;
       cursor: pointer;
       transition: opacity 0.2s;
+      text-decoration: none;
+      display: inline-block;
     }
 
     .btn:hover {
@@ -270,6 +297,13 @@
       color: #0f172a;
     }
 
+    .btn-google {
+      background-color: #f8fafc;
+      color: #0f172a;
+      font-weight: 600;
+      box-shadow: 0 0 14px rgba(14, 165, 233, 0.45);
+    }
+
     .btn-close {
       background-color: transparent;
       color: var(--text);
@@ -277,7 +311,11 @@
     }
   </style>
 </head>
-<body data-grid-size="{{ grid_size }}" data-ref-code="{{ ref_code }}" data-clicks-left="{{ clicks_left }}">
+<body data-grid-size="{{ grid_size }}"
+      data-ref-code="{{ ref_code }}"
+      data-clicks-left="{{ clicks_left }}"
+      data-user-email="{{ user_email }}"
+      data-prize="{{ current_prize }}">
   <h1>Find the Winning Pixel</h1>
 
   <div id="enigma-box">
@@ -285,7 +323,11 @@
     <p id="enigma-text">Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)</p>
   </div>
 
-  <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
+  <div id="status-bar">
+    <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
+    <div id="user-info"></div>
+  </div>
+
   <p id="message">Click a pixel to play.</p>
 
   <div id="frame">
@@ -294,15 +336,28 @@
 
   <div id="tooltip"></div>
 
-  <div id="overlay">
-    <div id="popup">
+  <!-- Referral popup (logged-in users out of clicks) -->
+  <div id="overlay-referral" class="overlay">
+    <div class="modal">
       <h2>⏳ Out of clicks for today!</h2>
       <p>Want <strong>2 extra tries</strong>? Share this link with a friend:</p>
       <div id="ref-link"></div>
       <div class="popup-buttons">
         <button class="btn btn-copy" id="btn-copy">📋 Copy Link</button>
         <button class="btn btn-whatsapp" id="btn-whatsapp">💬 WhatsApp</button>
-        <button class="btn btn-close" id="btn-close">Close</button>
+        <button class="btn btn-close" id="btn-close-referral">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Login modal (require_login: true) -->
+  <div id="overlay-login" class="overlay">
+    <div class="modal">
+      <h2>🔐 Sign in required</h2>
+      <p id="login-message"></p>
+      <div class="popup-buttons">
+        <a class="btn btn-google" href="/login">🔐 Continue with Google</a>
+        <button class="btn btn-close" id="btn-close-login">Close</button>
       </div>
     </div>
   </div>
@@ -310,28 +365,29 @@
   <script>
     const GRID_SIZE = parseInt(document.body.dataset.gridSize, 10);
     const REF_CODE = document.body.dataset.refCode;
+    const USER_EMAIL = document.body.dataset.userEmail;
     const grid = document.getElementById('grid');
     const frame = document.getElementById('frame');
     const tooltip = document.getElementById('tooltip');
     const message = document.getElementById('message');
     const clicksLeftEl = document.getElementById('clicks-left');
-    const overlay = document.getElementById('overlay');
+    const userInfoEl = document.getElementById('user-info');
+    const overlayReferral = document.getElementById('overlay-referral');
+    const overlayLogin = document.getElementById('overlay-login');
+    const loginMessageEl = document.getElementById('login-message');
     const refLinkEl = document.getElementById('ref-link');
     const btnCopy = document.getElementById('btn-copy');
     const btnWhatsapp = document.getElementById('btn-whatsapp');
-    const btnClose = document.getElementById('btn-close');
     let gameOver = false;
-
-    const MESSAGES = {
-      win: '🎉 YOU WON THE $10 AMAZON GIFT CARD!',
-      wrong: "❌ Wrong pixel! Check today's clue and try again.",
-      outOfClicks: '⏳ Out of clicks for today!',
-      connectionError: '⚠️ Connection error. Please try again.'
-    };
 
     clicksLeftEl.textContent = document.body.dataset.clicksLeft;
     grid.style.gridTemplateColumns = 'repeat(' + GRID_SIZE + ', 1fr)';
     grid.style.gridTemplateRows = 'repeat(' + GRID_SIZE + ', 1fr)';
+
+    if (USER_EMAIL) {
+      userInfoEl.innerHTML =
+        '👤 Logged in as: ' + USER_EMAIL + ' (<a href="/logout">Logout</a>)';
+    }
 
     function buildRefLink(code) {
       return window.location.origin + '/?ref=' + code;
@@ -382,7 +438,7 @@
 
     frame.addEventListener('mouseleave', hideTooltip);
 
-    /* --- Game grid --- */
+    /* --- Game grid (size driven by GRID_SIZE from Python) --- */
     for (let y = 1; y <= GRID_SIZE; y++) {
       for (let x = 1; x <= GRID_SIZE; x++) {
         const pixel = document.createElement('div');
@@ -393,14 +449,23 @@
       }
     }
 
-    /* --- Referral popup --- */
-    function showPopup(refCode) {
+    /* --- Modals --- */
+    function showReferralPopup(refCode) {
       refLinkEl.textContent = buildRefLink(refCode || REF_CODE);
-      overlay.classList.add('visible');
+      overlayReferral.classList.add('visible');
     }
 
-    btnClose.addEventListener('click', () => {
-      overlay.classList.remove('visible');
+    function showLoginModal(text) {
+      loginMessageEl.textContent = text;
+      overlayLogin.classList.add('visible');
+    }
+
+    document.getElementById('btn-close-referral').addEventListener('click', () => {
+      overlayReferral.classList.remove('visible');
+    });
+
+    document.getElementById('btn-close-login').addEventListener('click', () => {
+      overlayLogin.classList.remove('visible');
     });
 
     btnCopy.addEventListener('click', async () => {
@@ -440,30 +505,34 @@
         });
         const data = await response.json();
 
-        if (data.allowed === false) {
-          message.textContent = MESSAGES.outOfClicks;
-          message.className = 'lose';
-          clicksLeftEl.textContent = '0';
-          showPopup(data.ref_code);
-          return;
-        }
-
         if (typeof data.clicks_left === 'number') {
           clicksLeftEl.textContent = data.clicks_left;
         }
 
+        message.textContent = data.message;
+
+        if (data.require_login === true) {
+          message.className = 'lose';
+          showLoginModal(data.message);
+          return;
+        }
+
+        if (data.allowed === false) {
+          message.className = 'lose';
+          showReferralPopup(data.ref_code);
+          return;
+        }
+
         if (data.win) {
-          message.textContent = MESSAGES.win;
           message.className = 'win';
           pixel.classList.add('winner');
           gameOver = true;
         } else {
-          message.textContent = MESSAGES.wrong;
           message.className = 'lose';
           pixel.classList.add('wrong');
         }
       } catch (err) {
-        message.textContent = MESSAGES.connectionError;
+        message.textContent = '⚠️ Connection error. Please try again.';
       }
     });
   </script>
