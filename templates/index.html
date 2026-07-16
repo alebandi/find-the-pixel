@@ -1,19 +1,22 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trova il Pixel Vincente</title>
+  <title>Find the Winning Pixel</title>
   <style>
     :root {
-      --bg: #0d1117;
-      --panel: #161b22;
-      --border: #30363d;
-      --pixel: #21262d;
-      --pixel-hover: #30363d;
-      --text: #c9d1d9;
-      --accent: #58a6ff;
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --pixel: #1e293b;
+      --pixel-hover: #334155;
+      --text: #f8fafc;
+      --accent: #0ea5e9;
       --win: #39ff14;
+      --gold: #fbbf24;
+      --azure: #38bdf8;
+      --violet: #a78bfa;
     }
 
     * {
@@ -24,6 +27,7 @@
 
     body {
       background-color: var(--bg);
+      background-image: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.08), transparent 60%);
       color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif;
       min-height: 100vh;
@@ -31,14 +35,51 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 16px;
-      padding: 20px;
+      gap: 20px;
+      padding: 24px;
     }
 
     h1 {
-      font-size: 1.4rem;
-      font-weight: 500;
-      letter-spacing: 1px;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-shadow: 0 0 12px rgba(14, 165, 233, 0.5);
+    }
+
+    /* Daily Enigma box */
+    #enigma-box {
+      width: 100%;
+      max-width: 600px;
+      background-color: var(--panel);
+      border: 1px solid var(--accent);
+      border-radius: 12px;
+      padding: 18px 22px;
+      text-align: center;
+      box-shadow: 0 0 15px rgba(14, 165, 233, 0.35), inset 0 0 15px rgba(14, 165, 233, 0.08);
+      animation: glow 3s ease-in-out infinite;
+    }
+
+    @keyframes glow {
+      0%, 100% { box-shadow: 0 0 15px rgba(14, 165, 233, 0.35), inset 0 0 15px rgba(14, 165, 233, 0.08); }
+      50% { box-shadow: 0 0 25px rgba(14, 165, 233, 0.6), inset 0 0 20px rgba(14, 165, 233, 0.12); }
+    }
+
+    #enigma-box h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: var(--accent);
+      margin-bottom: 8px;
+    }
+
+    #enigma-text {
+      font-size: 0.95rem;
+      font-style: italic;
+      color: var(--text);
+      opacity: 0.9;
+      line-height: 1.5;
     }
 
     #counter {
@@ -67,14 +108,55 @@
       color: var(--accent);
     }
 
+    /* Sponsor LED frame around the grid */
+    #frame {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      padding: 22px;
+      background-color: rgba(30, 41, 59, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    .led {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+
+    .led:hover {
+      transform: scale(1.5);
+    }
+
+    .led.gold {
+      background-color: var(--gold);
+      box-shadow: 0 0 8px var(--gold);
+    }
+
+    .led.azure {
+      background-color: var(--azure);
+      box-shadow: 0 0 8px var(--azure);
+    }
+
+    .led.violet {
+      background-color: var(--violet);
+      box-shadow: 0 0 8px var(--violet);
+    }
+
+    /* Responsive centered 50x50 grid */
     #grid {
       display: grid;
+      width: 100%;
+      aspect-ratio: 1 / 1;
       gap: 1px;
+      margin: 0 auto;
     }
 
     .pixel {
-      width: 12px;
-      height: 12px;
       background-color: var(--pixel);
       cursor: pointer;
       transition: background-color 0.15s;
@@ -93,6 +175,7 @@
       box-shadow: 0 0 8px var(--win);
     }
 
+    /* Floating tooltip (grid + sponsor LEDs) */
     #tooltip {
       position: fixed;
       background-color: var(--panel);
@@ -104,8 +187,10 @@
       display: none;
       z-index: 10;
       white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
+    /* Out-of-clicks popup */
     #overlay {
       position: fixed;
       inset: 0;
@@ -177,12 +262,12 @@
 
     .btn-copy {
       background-color: var(--accent);
-      color: #0d1117;
+      color: #0f172a;
     }
 
     .btn-whatsapp {
       background-color: #25d366;
-      color: #0d1117;
+      color: #0f172a;
     }
 
     .btn-close {
@@ -193,21 +278,31 @@
   </style>
 </head>
 <body data-grid-size="{{ grid_size }}" data-ref-code="{{ ref_code }}" data-clicks-left="{{ clicks_left }}">
-  <h1>Trova il Pixel Vincente</h1>
-  <div id="counter">Click rimasti oggi: <strong id="clicks-left"></strong></div>
-  <p id="message">Clicca su un pixel per giocare.</p>
-  <div id="grid"></div>
+  <h1>Find the Winning Pixel</h1>
+
+  <div id="enigma-box">
+    <h2>🧠 DAILY ENIGMA</h2>
+    <p id="enigma-text">Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)</p>
+  </div>
+
+  <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
+  <p id="message">Click a pixel to play.</p>
+
+  <div id="frame">
+    <div id="grid"></div>
+  </div>
+
   <div id="tooltip"></div>
 
   <div id="overlay">
     <div id="popup">
-      <h2>⏳ Click esauriti!</h2>
-      <p>Vuoi <strong>2 tentativi extra</strong>? Condividi questo link con un amico:</p>
+      <h2>⏳ Out of clicks for today!</h2>
+      <p>Want <strong>2 extra tries</strong>? Share this link with a friend:</p>
       <div id="ref-link"></div>
       <div class="popup-buttons">
-        <button class="btn btn-copy" id="btn-copy">📋 Copia link</button>
+        <button class="btn btn-copy" id="btn-copy">📋 Copy Link</button>
         <button class="btn btn-whatsapp" id="btn-whatsapp">💬 WhatsApp</button>
-        <button class="btn btn-close" id="btn-close">Chiudi</button>
+        <button class="btn btn-close" id="btn-close">Close</button>
       </div>
     </div>
   </div>
@@ -216,6 +311,7 @@
     const GRID_SIZE = parseInt(document.body.dataset.gridSize, 10);
     const REF_CODE = document.body.dataset.refCode;
     const grid = document.getElementById('grid');
+    const frame = document.getElementById('frame');
     const tooltip = document.getElementById('tooltip');
     const message = document.getElementById('message');
     const clicksLeftEl = document.getElementById('clicks-left');
@@ -226,14 +322,67 @@
     const btnClose = document.getElementById('btn-close');
     let gameOver = false;
 
+    const MESSAGES = {
+      win: '🎉 YOU WON THE $10 AMAZON GIFT CARD!',
+      wrong: "❌ Wrong pixel! Check today's clue and try again.",
+      outOfClicks: '⏳ Out of clicks for today!',
+      connectionError: '⚠️ Connection error. Please try again.'
+    };
+
     clicksLeftEl.textContent = document.body.dataset.clicksLeft;
-    grid.style.gridTemplateColumns = 'repeat(' + GRID_SIZE + ', 12px)';
-    grid.style.gridTemplateRows = 'repeat(' + GRID_SIZE + ', 12px)';
+    grid.style.gridTemplateColumns = 'repeat(' + GRID_SIZE + ', 1fr)';
+    grid.style.gridTemplateRows = 'repeat(' + GRID_SIZE + ', 1fr)';
 
     function buildRefLink(code) {
       return window.location.origin + '/?ref=' + code;
     }
 
+    function showTooltip(text, x, y) {
+      tooltip.textContent = text;
+      tooltip.style.display = 'block';
+      tooltip.style.left = (x + 14) + 'px';
+      tooltip.style.top = (y + 14) + 'px';
+    }
+
+    function hideTooltip() {
+      tooltip.style.display = 'none';
+    }
+
+    /* --- Sponsor LED frame --- */
+    const SPONSOR_LEDS = [
+      { color: 'gold',   sponsor: '@user_tiktok',    pos: { top: '4px',  left: '15%' } },
+      { color: 'azure',  sponsor: '@pixel_master',   pos: { top: '4px',  left: '45%' } },
+      { color: 'violet', sponsor: '@neon_gamer',     pos: { top: '4px',  left: '75%' } },
+      { color: 'azure',  sponsor: '@grid_hunter',    pos: { top: '30%',  right: '4px' } },
+      { color: 'gold',   sponsor: '@lucky_clicker',  pos: { top: '65%',  right: '4px' } },
+      { color: 'violet', sponsor: '@enigma_solver',  pos: { bottom: '4px', left: '75%' } },
+      { color: 'gold',   sponsor: '@daily_winner',   pos: { bottom: '4px', left: '45%' } },
+      { color: 'azure',  sponsor: '@blue_pixel',     pos: { bottom: '4px', left: '15%' } },
+      { color: 'violet', sponsor: '@viral_violet',   pos: { top: '65%',  left: '4px' } },
+      { color: 'gold',   sponsor: '@gold_rush',      pos: { top: '30%',  left: '4px' } }
+    ];
+
+    SPONSOR_LEDS.forEach((item) => {
+      const led = document.createElement('div');
+      led.className = 'led ' + item.color;
+      led.dataset.sponsor = item.sponsor;
+      Object.assign(led.style, item.pos);
+      frame.appendChild(led);
+    });
+
+    frame.addEventListener('mousemove', (e) => {
+      if (e.target.classList.contains('led')) {
+        showTooltip('✨ Sponsored by ' + e.target.dataset.sponsor, e.clientX, e.clientY);
+      } else if (e.target.classList.contains('pixel')) {
+        showTooltip('X: ' + e.target.dataset.x + ', Y: ' + e.target.dataset.y, e.clientX, e.clientY);
+      } else {
+        hideTooltip();
+      }
+    });
+
+    frame.addEventListener('mouseleave', hideTooltip);
+
+    /* --- Game grid --- */
     for (let y = 1; y <= GRID_SIZE; y++) {
       for (let x = 1; x <= GRID_SIZE; x++) {
         const pixel = document.createElement('div');
@@ -244,18 +393,7 @@
       }
     }
 
-    grid.addEventListener('mousemove', (e) => {
-      if (!e.target.classList.contains('pixel')) return;
-      tooltip.textContent = 'X: ' + e.target.dataset.x + ', Y: ' + e.target.dataset.y;
-      tooltip.style.display = 'block';
-      tooltip.style.left = (e.clientX + 12) + 'px';
-      tooltip.style.top = (e.clientY + 12) + 'px';
-    });
-
-    grid.addEventListener('mouseleave', () => {
-      tooltip.style.display = 'none';
-    });
-
+    /* --- Referral popup --- */
     function showPopup(refCode) {
       refLinkEl.textContent = buildRefLink(refCode || REF_CODE);
       overlay.classList.add('visible');
@@ -269,7 +407,7 @@
       const link = refLinkEl.textContent;
       try {
         await navigator.clipboard.writeText(link);
-        btnCopy.textContent = '✅ Copiato!';
+        btnCopy.textContent = '✅ Copied!';
       } catch (err) {
         const range = document.createRange();
         range.selectNodeContents(refLinkEl);
@@ -277,16 +415,17 @@
         sel.removeAllRanges();
         sel.addRange(range);
         document.execCommand('copy');
-        btnCopy.textContent = '✅ Copiato!';
+        btnCopy.textContent = '✅ Copied!';
       }
     });
 
     btnWhatsapp.addEventListener('click', () => {
       const link = refLinkEl.textContent;
-      const text = encodeURIComponent('Gioca a Trova il Pixel Vincente! Usa il mio link: ' + link);
+      const text = encodeURIComponent('Play Find the Winning Pixel! Use my link: ' + link);
       window.open('https://wa.me/?text=' + text, '_blank');
     });
 
+    /* --- Pixel click --- */
     grid.addEventListener('click', async (e) => {
       if (gameOver || !e.target.classList.contains('pixel')) return;
       const pixel = e.target;
@@ -302,7 +441,7 @@
         const data = await response.json();
 
         if (data.allowed === false) {
-          message.textContent = data.message;
+          message.textContent = MESSAGES.outOfClicks;
           message.className = 'lose';
           clicksLeftEl.textContent = '0';
           showPopup(data.ref_code);
@@ -313,17 +452,18 @@
           clicksLeftEl.textContent = data.clicks_left;
         }
 
-        message.textContent = data.message;
         if (data.win) {
-          pixel.classList.add('winner');
+          message.textContent = MESSAGES.win;
           message.className = 'win';
+          pixel.classList.add('winner');
           gameOver = true;
         } else {
-          pixel.classList.add('wrong');
+          message.textContent = MESSAGES.wrong;
           message.className = 'lose';
+          pixel.classList.add('wrong');
         }
       } catch (err) {
-        message.textContent = 'Errore di connessione al server.';
+        message.textContent = MESSAGES.connectionError;
       }
     });
   </script>
