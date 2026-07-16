@@ -9,6 +9,7 @@ from datetime import date
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
 
 load_dotenv()
 
@@ -32,6 +33,18 @@ DB_PATH = "game.db"
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-flask-session-secret-key")
+
+
+def get_client_ip():
+    return request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+
+
+limiter = Limiter(
+    key_func=get_client_ip,
+    app=app,
+    storage_uri="memory://",
+    default_limits=[],
+)
 
 oauth = OAuth(app)
 google = oauth.register(
@@ -101,10 +114,6 @@ def get_leds(conn):
 
 def generate_ref_code(ip):
     return hashlib.sha256(ip.encode()).hexdigest()[:6].upper()
-
-
-def get_client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
 
 
 def get_or_create_user(conn, ip):
@@ -227,13 +236,35 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.errorhandler(429)
+def rate_limit_exceeded(e):
+    logger.warning("SECURITY: rate limit exceeded by IP %s on %s", get_client_ip(), request.path)
+    return jsonify({
+        "allowed": False,
+        "win": False,
+        "message": "Too many attempts. Please slow down and try again in a minute.",
+    }), 429
+
+
 @app.route("/check_pixel", methods=["POST"])
+@limiter.limit("5 per minute")
 def check_pixel():
     data = request.get_json(silent=True) or {}
     try:
         x = int(data.get("x"))
         y = int(data.get("y"))
     except (TypeError, ValueError):
+        logger.warning(
+            "SECURITY: malformed coordinates from IP %s: payload=%r",
+            get_client_ip(), data,
+        )
+        return jsonify({"allowed": False, "win": False, "message": "Invalid coordinate."}), 400
+
+    if not (1 <= x <= GRID_SIZE and 1 <= y <= GRID_SIZE):
+        logger.warning(
+            "SECURITY: out-of-grid coordinates from IP %s: x=%s y=%s (grid is %sx%s)",
+            get_client_ip(), x, y, GRID_SIZE, GRID_SIZE,
+        )
         return jsonify({"allowed": False, "win": False, "message": "Invalid coordinate."}), 400
 
     ip = get_client_ip()
