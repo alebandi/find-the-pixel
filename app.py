@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import random
 import sqlite3
@@ -9,6 +10,9 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("pixel-game")
 
 # =====================================================================
 # CAMPAIGN CONFIGURATION — change these values to tune the game
@@ -150,11 +154,37 @@ def auth_google_callback():
 
     ip = get_client_ip()
     with get_db() as conn:
-        get_or_create_user(conn, ip)
+        user = get_or_create_user(conn, ip)
+
+        # Anti-abuse: one Google account per IP, one IP per Google account
+        if user["google_id"] and user["google_id"] != google_id:
+            logger.warning("SECURITY: IP %s tried to link a second Google account (%s)", ip, email)
+            return redirect(url_for(
+                "index",
+                login_error="Security limit: This device or account is already associated with another profile.",
+            ))
+
+        other = conn.execute(
+            "SELECT ip_address FROM users WHERE google_id = ? AND ip_address != ?",
+            (google_id, ip),
+        ).fetchone()
+        if other:
+            logger.warning(
+                "SECURITY: Google account %s (already on IP %s) tried to link from IP %s",
+                email, other["ip_address"], ip,
+            )
+            return redirect(url_for(
+                "index",
+                login_error="Security limit: This device or account is already associated with another profile.",
+            ))
+
+        is_new_link = user["google_id"] is None
         conn.execute(
             "UPDATE users SET email = ?, google_id = ? WHERE ip_address = ?",
             (email, google_id, ip),
         )
+        if is_new_link:
+            logger.info("NEW ACCOUNT LINKED: ip=%s email=%s", ip, email)
 
     session["email"] = email
     session["google_id"] = google_id
