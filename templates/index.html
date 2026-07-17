@@ -19,6 +19,18 @@
     <p id="enigma-text">{{ daily_enigma }}</p>
   </div>
 
+  {% if sponsor_pro.active %}
+  <div id="sponsor-pro-box" class="sponsor-active">
+    <p>👑 PRO SPONSOR: <strong>{{ sponsor_pro.name }}</strong> - {{ sponsor_pro.message }}</p>
+    <a class="btn btn-sponsor" href="{{ sponsor_pro.link }}" target="_blank" rel="noopener">Visit Sponsor</a>
+  </div>
+  {% else %}
+  <div id="sponsor-pro-box" class="sponsor-free">
+    <p>🚀 Space Available! Be today's PRO Sponsor for maximum visibility.</p>
+    <a class="btn btn-sponsor" href="{{ sponsor_pro.cta_link }}">Click here to promote your brand!</a>
+  </div>
+  {% endif %}
+
   <div id="status-bar">
     <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
     <div id="user-info"></div>

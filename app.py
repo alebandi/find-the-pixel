@@ -25,6 +25,16 @@ MAX_DAILY_CLICKS = 1
 DAILY_ENIGMA = "Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)"
 LED_SLOTS = 10  # sponsor LED spots around the grid
 
+# High-visibility PRO Sponsor box (shown under the Daily Enigma).
+# Set "active": True and fill in the details to display the sponsor.
+SPONSOR_PRO = {
+    "active": True,
+    "name": "@findthepixel_global",
+    "message": "Follow us on TikTok!",
+    "link": "https://www.tiktok.com/@findthepixel_global",
+    "cta_link": "mailto:sponsor@example.com",  # where the 'become a sponsor' CTA points
+}
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 # =====================================================================
@@ -170,6 +180,7 @@ def index():
         grid_size=GRID_SIZE,
         current_prize=CURRENT_PRIZE,
         daily_enigma=DAILY_ENIGMA,
+        sponsor_pro=SPONSOR_PRO,
         leds_json=json.dumps(leds),
         clicks_left=clicks_left,
         ref_code=user["ref_code"],
