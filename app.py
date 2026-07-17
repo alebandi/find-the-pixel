@@ -15,6 +15,7 @@ from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_limiter import Limiter
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
@@ -63,6 +64,7 @@ HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 DB_PATH = "game.db"
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-this-flask-session-secret-key")
 
 
