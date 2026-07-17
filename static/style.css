@@ -204,6 +204,40 @@ h1 {
   line-height: 1.4;
 }
 
+/* Prize banner — neon-accented box showing the current prize */
+.prize-banner {
+  width: 100%;
+  max-width: 560px;
+  background-color: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.35), inset 0 0 12px rgba(251, 191, 36, 0.06);
+  animation: prize-glow 2.5s ease-in-out infinite;
+  line-height: 1.5;
+}
+
+.prize-banner strong {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+@keyframes prize-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(251, 191, 36, 0.35), inset 0 0 12px rgba(251, 191, 36, 0.06); }
+  50% { box-shadow: 0 0 22px rgba(251, 191, 36, 0.6), inset 0 0 18px rgba(251, 191, 36, 0.1); }
+}
+
+@media (max-width: 600px) {
+  .prize-banner {
+    font-size: 0.85rem;
+    padding: 6px 12px;
+  }
+}
+
 /* PRO Sponsor box — unified compact layout */
 #sponsor-pro-box {
   width: 100%;
