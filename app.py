@@ -5,6 +5,7 @@ import os
 import random
 import re
 import sqlite3
+import sys
 from datetime import date, datetime, timedelta, timezone
 
 import stripe
@@ -45,6 +46,7 @@ STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 stripe.api_key = STRIPE_SECRET_KEY
 
+ADMIN_RESET_KEY = os.getenv("ADMIN_RESET_KEY")
 SPONSOR_DURATION = timedelta(hours=24)
 DEFAULT_LED_COLORS = ["gold", "azure", "violet"]
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -187,6 +189,16 @@ def reset_pro_sponsor(conn):
         "UPDATE pro_sponsor SET active = 0, message = NULL, link = NULL, "
         "expires_at = NULL, stripe_session_id = NULL WHERE id = 1",
     )
+
+
+def force_reset_all_sponsors():
+    """Immediately clear all active LED sponsors and reset PRO sponsor to default."""
+    with get_db() as conn:
+        for slot in range(LED_SLOTS):
+            reset_led_slot(conn, slot)
+        reset_pro_sponsor(conn)
+        conn.execute("DELETE FROM processed_stripe_sessions")
+    logger.info("FORCE RESET: all LED slots cleared, PRO sponsor reset to default, processed sessions wiped")
 
 
 def expire_stale_sponsorships(conn):
@@ -733,8 +745,31 @@ def check_pixel():
     })
 
 
+# =====================================================================
+# ADMIN — hidden reset route, protected by $ADMIN_RESET_KEY env var
+# =====================================================================
+@app.route("/admin/reset-sponsors", methods=["POST"])
+def admin_reset_sponsors():
+    """Immediately wipe all LED activations, reset PRO sponsor to @findthepixel_global default,
+    and clear processed Stripe session history. Requires X-Admin-Key header matching ADMIN_RESET_KEY."""
+    if not ADMIN_RESET_KEY:
+        return jsonify({"error": "Admin reset is not configured (ADMIN_RESET_KEY not set)."}), 503
+
+    key = request.headers.get("X-Admin-Key", "")
+    if key != ADMIN_RESET_KEY:
+        return jsonify({"error": "Forbidden"}), 403
+
+    force_reset_all_sponsors()
+    return jsonify({"status": "ok", "message": "All sponsors have been reset to defaults."}), 200
+
+
 init_db()
 debug_print_winning_pixel()
 
 if __name__ == "__main__":
+    # CLI flag: python app.py --reset
+    if "--reset" in sys.argv:
+        print("⚠️  --reset flag detected: forcing sponsor reset immediately...")
+        force_reset_all_sponsors()
+        print("✅ All sponsors reset to defaults. Starting server normally.")
     app.run(debug=True)
