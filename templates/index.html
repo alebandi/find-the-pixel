@@ -12,41 +12,98 @@
       data-user-email="{{ user_email }}"
       data-prize="{{ current_prize }}"
       data-leds="{{ leds_json }}">
-  <h1>Find the Winning Pixel</h1>
+  <div class="page-layout">
+    <aside class="ad-banner ad-banner-left" aria-label="Left advertisement">
+      <p class="ad-label">Advertisement</p>
+      <p class="ad-space">AdSpace</p>
+      <div class="ad-placeholder">
+        <!-- Google AdSense <script> goes here -->
+        <span class="ad-placeholder-text">160 × 600</span>
+      </div>
+    </aside>
 
-  <div id="enigma-box">
-    <h2>🧠 DAILY ENIGMA</h2>
-    <p id="enigma-text">{{ daily_enigma }}</p>
+    <main class="main-content">
+      <header class="game-header">
+        <h1>Find the Winning Pixel</h1>
+
+        <div id="enigma-box">
+          <h2>🧠 DAILY ENIGMA</h2>
+          <p id="enigma-text">{{ daily_enigma }}</p>
+        </div>
+
+        {% if sponsor_pro.active %}
+        <div id="sponsor-pro-box" class="sponsor-active">
+          <div class="sponsor-content">
+            <span class="sponsor-text">👑 <strong>{{ sponsor_pro.name }}</strong> &mdash; {{ sponsor_pro.message }}</span>
+            <a class="btn btn-sponsor btn-sponsor-visit" href="{{ sponsor_pro.link }}" target="_blank" rel="noopener">Visit Sponsor</a>
+          </div>
+          {% if pro_purchasable %}
+          <div class="sponsor-cta">
+            <span class="sponsor-cta-text">🚀 Replace this spot with your brand for 24 hours.</span>
+            <button type="button" class="btn btn-sponsor btn-sponsor-promote" id="btn-pro-sponsor">Promote your brand!</button>
+          </div>
+          {% else %}
+          <div class="sponsor-cta sponsor-locked">
+            <span class="sponsor-cta-text">🔒 Sponsored Spot — Available again soon</span>
+          </div>
+          {% endif %}
+        </div>
+        {% else %}
+        <div id="sponsor-pro-box" class="sponsor-free">
+          {% if pro_purchasable %}
+          <div class="sponsor-cta">
+            <span class="sponsor-cta-text">🚀 Replace this spot with your brand for 24 hours.</span>
+            <button type="button" class="btn btn-sponsor btn-sponsor-promote" id="btn-pro-sponsor">Promote your brand!</button>
+          </div>
+          {% else %}
+          <div class="sponsor-cta sponsor-locked">
+            <span class="sponsor-cta-text">🔒 Sponsored Spot — Available again soon</span>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        {% if payment_notice %}
+        <p id="payment-notice" class="payment-notice">{{ payment_notice }}</p>
+        {% endif %}
+
+        <div id="status-bar">
+          <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
+          <div id="user-info"></div>
+        </div>
+
+        <p id="message">Click a pixel to play.</p>
+      </header>
+
+      <div id="grid-wrapper">
+        <div id="led-row-top" class="led-row"></div>
+        <div id="middle-row">
+          <div id="led-col-left" class="led-col"></div>
+          <div id="grid"></div>
+          <div id="led-col-right" class="led-col"></div>
+        </div>
+        <div id="led-row-bottom" class="led-row"></div>
+      </div>
+    </main>
+
+    <aside class="ad-banner ad-banner-right" aria-label="Right advertisement">
+      <p class="ad-label">Advertisement</p>
+      <p class="ad-space">AdSpace</p>
+      <div class="ad-placeholder">
+        <!-- Google AdSense <script> goes here -->
+        <span class="ad-placeholder-text">160 × 600</span>
+      </div>
+    </aside>
   </div>
 
-  {% if sponsor_pro.active %}
-  <div id="sponsor-pro-box" class="sponsor-active">
-    <p>👑 PRO SPONSOR: <strong>{{ sponsor_pro.name }}</strong> - {{ sponsor_pro.message }}</p>
-    <a class="btn btn-sponsor" href="{{ sponsor_pro.link }}" target="_blank" rel="noopener">Visit Sponsor</a>
-  </div>
-  {% else %}
-  <div id="sponsor-pro-box" class="sponsor-free">
-    <p>🚀 Space Available! Be today's PRO Sponsor for maximum visibility.</p>
-    <a class="btn btn-sponsor" href="{{ sponsor_pro.cta_link }}">Click here to promote your brand!</a>
-  </div>
-  {% endif %}
-
-  <div id="status-bar">
-    <div id="counter">⚡ Clicks left today: <strong id="clicks-left"></strong></div>
-    <div id="user-info"></div>
-  </div>
-
-  <p id="message">Click a pixel to play.</p>
-
-  <div id="grid-wrapper">
-    <div id="led-row-top" class="led-row"></div>
-    <div id="middle-row">
-      <div id="led-col-left" class="led-col"></div>
-      <div id="grid"></div>
-      <div id="led-col-right" class="led-col"></div>
+  <aside class="ad-banner ad-banner-mobile" aria-label="Mobile advertisement">
+    <p class="ad-label">Advertisement</p>
+    <p class="ad-space">AdSpace</p>
+    <div class="ad-placeholder ad-placeholder-wide">
+      <!-- Google AdSense <script> goes here -->
+      <span class="ad-placeholder-text">320 × 50</span>
     </div>
-    <div id="led-row-bottom" class="led-row"></div>
-  </div>
+  </aside>
 
   <div id="tooltip"></div>
 
@@ -74,6 +131,43 @@
         <button class="btn btn-close" id="btn-close-login">Close</button>
       </div>
       <p id="login-error" class="login-error"></p>
+    </div>
+  </div>
+
+  <!-- Sponsor checkout modal -->
+  <div id="overlay-sponsor" class="overlay">
+    <div class="modal modal-sponsor">
+      <h2 id="sponsor-modal-title">Sponsor this spot</h2>
+      <p id="sponsor-modal-desc" class="sponsor-modal-desc"></p>
+      <form id="sponsor-form" class="sponsor-form">
+        <div id="sponsor-field-color" class="form-field">
+          <label for="sponsor-color">LED Color</label>
+          <div class="color-picker-row">
+            <input type="color" id="sponsor-color" name="color" value="#fbbf24">
+            <input type="text" id="sponsor-color-hex" value="#fbbf24" maxlength="7" pattern="#[0-9A-Fa-f]{6}">
+          </div>
+        </div>
+        <div class="form-field">
+          <label for="sponsor-text" id="sponsor-text-label">Tooltip text</label>
+          <input type="text" id="sponsor-text" name="custom_text" maxlength="120"
+                 placeholder="e.g. @your_tiktok" required>
+        </div>
+        <div id="sponsor-field-days" class="form-field">
+          <label for="sponsor-days">Duration (days)</label>
+          <input type="number" id="sponsor-days" name="days" min="1" max="7" value="1"
+                 style="background-color:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text);font-size:0.9rem;width:100%;">
+        </div>
+        <div class="form-field">
+          <label for="sponsor-link">Destination URL</label>
+          <input type="url" id="sponsor-link" name="custom_link" maxlength="500"
+                 placeholder="https://tiktok.com/@your_channel" required>
+        </div>
+        <p id="sponsor-form-error" class="sponsor-form-error"></p>
+        <div class="popup-buttons">
+          <button type="submit" class="btn btn-copy" id="btn-sponsor-submit">Continue to payment →</button>
+          <button type="button" class="btn btn-close" id="btn-close-sponsor">Cancel</button>
+        </div>
+      </form>
     </div>
   </div>
 

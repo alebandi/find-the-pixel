@@ -3,9 +3,11 @@ import json
 import logging
 import os
 import random
+import re
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
+import stripe
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -25,18 +27,27 @@ MAX_DAILY_CLICKS = 1
 DAILY_ENIGMA = "Clue #1: Where the perfect tens cross the age of majority... (Find the winning coordinates)"
 LED_SLOTS = 10  # sponsor LED spots around the grid
 
-# High-visibility PRO Sponsor box (shown under the Daily Enigma).
-# Set "active": True and fill in the details to display the sponsor.
+# Default PRO banner shown when no paid sponsor is active (after expiry or before any purchase).
 SPONSOR_PRO = {
     "active": True,
     "name": "@findthepixel_global",
     "message": "Follow us on TikTok!",
     "link": "https://www.tiktok.com/@findthepixel_global",
-    "cta_link": "mailto:sponsor@example.com",  # where the 'become a sponsor' CTA points
+    "cta_link": "mailto:sponsor@example.com",
 }
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
+STRIPE_PRICE_ID_LED = os.getenv("STRIPE_PRICE_ID_LED")
+STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+stripe.api_key = STRIPE_SECRET_KEY
+
+SPONSOR_DURATION = timedelta(hours=24)
+DEFAULT_LED_COLORS = ["gold", "azure", "violet"]
+HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 # =====================================================================
 
 DB_PATH = "game.db"
@@ -65,10 +76,30 @@ google = oauth.register(
     client_kwargs={"scope": "openid email profile"},
 )
 
-winning_coordinate = {
-    "x": random.randint(1, GRID_SIZE),
-    "y": random.randint(1, GRID_SIZE),
-}
+
+def get_daily_winning_coordinate():
+    """Deterministic winning pixel for today (same coords across restarts)."""
+    seed = int(hashlib.sha256(date.today().isoformat().encode()).hexdigest(), 16) % (2**32)
+    rng = random.Random(seed)
+    return {"x": rng.randint(1, GRID_SIZE), "y": rng.randint(1, GRID_SIZE)}
+
+
+winning_coordinate = get_daily_winning_coordinate()
+
+
+def debug_print_winning_pixel():
+    print(
+        f'🎯 [DEBUG - TIKTOK] Il pixel vincente di oggi è: '
+        f'X={winning_coordinate["x"]}, Y={winning_coordinate["y"]}'
+    )
+
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def default_led_color(slot):
+    return DEFAULT_LED_COLORS[slot % len(DEFAULT_LED_COLORS)]
 
 
 def get_db():
@@ -78,7 +109,7 @@ def get_db():
 
 
 def init_db():
-    """Create the users table and safely migrate old schemas."""
+    """Create tables and safely migrate old schemas."""
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -91,35 +122,260 @@ def init_db():
                 google_id TEXT
             )
         """)
-        # Safe migration: add missing columns to an existing table
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
         for column, definition in (("email", "TEXT"), ("google_id", "TEXT")):
             if column not in existing:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
 
-        # Sponsor LED slots: owner is NULL until someone buys the spot
         conn.execute("""
             CREATE TABLE IF NOT EXISTS leds (
                 slot INTEGER PRIMARY KEY,
                 color TEXT NOT NULL,
                 owner_username TEXT,
-                owner_google_id TEXT
+                owner_google_id TEXT,
+                link TEXT,
+                expires_at TEXT,
+                stripe_session_id TEXT
             )
         """)
-        colors = ["gold", "azure", "violet"]
+        led_cols = {row["name"] for row in conn.execute("PRAGMA table_info(leds)")}
+        for column, definition in (
+            ("link", "TEXT"),
+            ("expires_at", "TEXT"),
+            ("stripe_session_id", "TEXT"),
+        ):
+            if column not in led_cols:
+                conn.execute(f"ALTER TABLE leds ADD COLUMN {column} {definition}")
+
+        colors = DEFAULT_LED_COLORS
         for slot in range(LED_SLOTS):
             conn.execute(
                 "INSERT OR IGNORE INTO leds (slot, color) VALUES (?, ?)",
                 (slot, colors[slot % len(colors)]),
             )
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pro_sponsor (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                active INTEGER DEFAULT 0,
+                message TEXT,
+                link TEXT,
+                expires_at TEXT,
+                stripe_session_id TEXT
+            )
+        """)
+        conn.execute("INSERT OR IGNORE INTO pro_sponsor (id, active) VALUES (1, 0)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_stripe_sessions (
+                session_id TEXT PRIMARY KEY,
+                processed_at TEXT NOT NULL
+            )
+        """)
+
+
+def reset_led_slot(conn, slot):
+    conn.execute(
+        "UPDATE leds SET color = ?, owner_username = NULL, owner_google_id = NULL, "
+        "link = NULL, expires_at = NULL, stripe_session_id = NULL WHERE slot = ?",
+        (default_led_color(slot), slot),
+    )
+
+
+def reset_pro_sponsor(conn):
+    conn.execute(
+        "UPDATE pro_sponsor SET active = 0, message = NULL, link = NULL, "
+        "expires_at = NULL, stripe_session_id = NULL WHERE id = 1",
+    )
+
+
+def expire_stale_sponsorships(conn):
+    now = utc_now_iso()
+    expired_leds = conn.execute(
+        "SELECT slot FROM leds WHERE owner_username IS NOT NULL "
+        "AND expires_at IS NOT NULL AND expires_at <= ?",
+        (now,),
+    ).fetchall()
+    for row in expired_leds:
+        reset_led_slot(conn, row["slot"])
+        logger.info("LED sponsor expired: slot=%s", row["slot"])
+
+    pro = conn.execute("SELECT * FROM pro_sponsor WHERE id = 1").fetchone()
+    if pro and pro["active"] and pro["expires_at"] and pro["expires_at"] <= now:
+        reset_pro_sponsor(conn)
+        logger.info("PRO sponsor expired")
+
+
+def is_paid_pro_active(conn):
+    expire_stale_sponsorships(conn)
+    row = conn.execute("SELECT active FROM pro_sponsor WHERE id = 1").fetchone()
+    return bool(row and row["active"])
+
+
+def get_sponsor_pro(conn):
+    expire_stale_sponsorships(conn)
+    row = conn.execute("SELECT * FROM pro_sponsor WHERE id = 1").fetchone()
+    if row and row["active"] and row["message"]:
+        return {
+            "active": True,
+            "name": row["message"],
+            "message": row["message"],
+            "link": row["link"],
+            "paid": True,
+        }
+    if SPONSOR_PRO.get("active"):
+        return {
+            "active": True,
+            "name": SPONSOR_PRO["name"],
+            "message": SPONSOR_PRO["message"],
+            "link": SPONSOR_PRO["link"],
+            "paid": False,
+        }
+    return {
+        "active": False,
+        "cta_link": SPONSOR_PRO.get("cta_link", "#"),
+    }
+
 
 def get_leds(conn):
-    rows = conn.execute("SELECT slot, color, owner_username FROM leds ORDER BY slot").fetchall()
+    expire_stale_sponsorships(conn)
+    rows = conn.execute(
+        "SELECT slot, color, owner_username, link FROM leds ORDER BY slot",
+    ).fetchall()
     return [
-        {"slot": r["slot"], "color": r["color"], "owner": r["owner_username"]}
+        {
+            "slot": r["slot"],
+            "color": r["color"],
+            "owner": r["owner_username"],
+            "link": r["link"],
+        }
         for r in rows
     ]
+
+
+def is_session_processed(conn, session_id):
+    return conn.execute(
+        "SELECT 1 FROM processed_stripe_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone() is not None
+
+
+def mark_session_processed(conn, session_id):
+    conn.execute(
+        "INSERT OR IGNORE INTO processed_stripe_sessions (session_id, processed_at) VALUES (?, ?)",
+        (session_id, utc_now_iso()),
+    )
+
+
+def activate_led_sponsor(conn, slot_id, color, custom_text, custom_link, session_id, expires_at):
+    conn.execute(
+        "UPDATE leds SET color = ?, owner_username = ?, link = ?, "
+        "expires_at = ?, stripe_session_id = ? WHERE slot = ?",
+        (color, custom_text, custom_link, expires_at, session_id, slot_id),
+    )
+    logger.info("LED sponsor activated: slot=%s text=%s", slot_id, custom_text)
+
+
+def activate_pro_sponsor(conn, custom_text, custom_link, session_id, expires_at):
+    conn.execute(
+        "UPDATE pro_sponsor SET active = 1, message = ?, link = ?, "
+        "expires_at = ?, stripe_session_id = ? WHERE id = 1",
+        (custom_text, custom_link, expires_at, session_id),
+    )
+    logger.info("PRO sponsor activated: text=%s", custom_text)
+
+
+def activate_from_stripe_session(checkout_session):
+    """Idempotent activation from a paid Stripe Checkout session."""
+    session_id = getattr(checkout_session, "id", None)
+    if not session_id or getattr(checkout_session, "payment_status", None) != "paid":
+        return False
+
+    raw_metadata = getattr(checkout_session, "metadata", None)
+    if raw_metadata and hasattr(raw_metadata, "to_dict"):
+        metadata = raw_metadata.to_dict()
+    elif isinstance(raw_metadata, dict):
+        metadata = raw_metadata
+    else:
+        metadata = {}
+    purchase_type = (metadata.get("type") or "").upper()
+    now_utc = datetime.now(timezone.utc)
+    expires_at = (now_utc + SPONSOR_DURATION).isoformat()
+
+    with get_db() as conn:
+        if is_session_processed(conn, session_id):
+            return True
+
+        if purchase_type == "LED":
+            try:
+                slot_id = int(metadata.get("slot_id"))
+            except (TypeError, ValueError):
+                logger.error("Invalid slot_id in Stripe metadata: %r", metadata)
+                return False
+            if not (0 <= slot_id < LED_SLOTS):
+                return False
+
+            led = conn.execute(
+                "SELECT owner_username FROM leds WHERE slot = ?", (slot_id,),
+            ).fetchone()
+            if led and led["owner_username"]:
+                mark_session_processed(conn, session_id)
+                return True
+
+            color = metadata.get("color", "#fbbf24")
+            if not HEX_COLOR_RE.match(color):
+                color = "#fbbf24"
+            custom_text = metadata.get("custom_text", "").strip()
+            custom_link = metadata.get("custom_link", "").strip()
+            if not custom_text or not custom_link:
+                return False
+
+            activate_led_sponsor(
+                conn, slot_id, color, custom_text, custom_link, session_id, expires_at,
+            )
+
+        elif purchase_type == "PRO":
+            if is_paid_pro_active(conn):
+                mark_session_processed(conn, session_id)
+                return True
+
+            custom_text = metadata.get("custom_text", "").strip()
+            custom_link = metadata.get("custom_link", "").strip()
+            if not custom_text or not custom_link:
+                return False
+
+            try:
+                pro_days = int(metadata.get("days", 1))
+            except (TypeError, ValueError):
+                pro_days = 1
+            pro_days = max(1, min(pro_days, 7))
+            pro_expires_at = (now_utc + timedelta(hours=pro_days * 24)).isoformat()
+
+            activate_pro_sponsor(conn, custom_text, custom_link, session_id, pro_expires_at)
+
+        else:
+            logger.error("Unknown sponsor type in Stripe metadata: %r", purchase_type)
+            return False
+
+        mark_session_processed(conn, session_id)
+    return True
+
+
+def validate_sponsor_fields(custom_text, custom_link, color=None):
+    custom_text = (custom_text or "").strip()
+    custom_link = (custom_link or "").strip()
+    if not custom_text or not custom_link:
+        return None, "Please fill in all required fields."
+    if len(custom_text) > 120:
+        custom_text = custom_text[:120]
+    if not custom_link.startswith(("http://", "https://")):
+        return None, "Destination URL must start with http:// or https://"
+    if color is not None:
+        color = (color or "#fbbf24").strip()
+        if not HEX_COLOR_RE.match(color):
+            color = "#fbbf24"
+        return {"custom_text": custom_text, "custom_link": custom_link, "color": color}, None
+    return {"custom_text": custom_text, "custom_link": custom_link}, None
 
 
 def generate_ref_code(ip):
@@ -156,6 +412,24 @@ def is_logged_in():
 
 @app.route("/")
 def index():
+    payment_success = False
+    if request.args.get("payment") == "success":
+        session_id = request.args.get("session_id", "").strip()
+        if session_id and STRIPE_SECRET_KEY:
+            try:
+                checkout_session = stripe.checkout.Session.retrieve(session_id)
+                if activate_from_stripe_session(checkout_session):
+                    payment_success = True
+            except stripe.StripeError as e:
+                logger.error("Stripe session retrieve error: %s", e)
+        return redirect(url_for("index", payment_success="1" if payment_success else "0"))
+
+    payment_notice = None
+    if request.args.get("payment_success") == "1":
+        payment_notice = "Payment successful! Your sponsorship is now live for 24 hours."
+    elif request.args.get("payment_success") == "0":
+        payment_notice = "Payment received, but sponsorship activation failed. Contact support."
+
     ip = get_client_ip()
     with get_db() as conn:
         user = get_or_create_user(conn, ip)
@@ -163,7 +437,7 @@ def index():
         ref = request.args.get("ref", "").strip().upper()
         if ref and ref != user["ref_code"]:
             referrer = conn.execute(
-                "SELECT * FROM users WHERE ref_code = ?", (ref,)
+                "SELECT * FROM users WHERE ref_code = ?", (ref,),
             ).fetchone()
             if referrer:
                 conn.execute(
@@ -174,17 +448,21 @@ def index():
         user = reset_daily_clicks(conn, user, ip)
         clicks_left = max(user["max_clicks"] - user["clicks_today"], 0)
         leds = get_leds(conn)
+        sponsor_pro = get_sponsor_pro(conn)
+        pro_purchasable = not is_paid_pro_active(conn)
 
     return render_template(
         "index.html",
         grid_size=GRID_SIZE,
         current_prize=CURRENT_PRIZE,
         daily_enigma=DAILY_ENIGMA,
-        sponsor_pro=SPONSOR_PRO,
+        sponsor_pro=sponsor_pro,
+        pro_purchasable=pro_purchasable,
         leds_json=json.dumps(leds),
         clicks_left=clicks_left,
         ref_code=user["ref_code"],
         user_email=session.get("email", ""),
+        payment_notice=payment_notice,
     )
 
 
@@ -206,7 +484,6 @@ def auth_google_callback():
     with get_db() as conn:
         user = get_or_create_user(conn, ip)
 
-        # Anti-abuse: one Google account per IP, one IP per Google account
         if user["google_id"] and user["google_id"] != google_id:
             logger.warning("SECURITY: IP %s tried to link a second Google account (%s)", ip, email)
             return redirect(url_for(
@@ -245,6 +522,122 @@ def auth_google_callback():
 def logout():
     session.clear()
     return redirect(url_for("index"))
+
+
+@app.route("/create-checkout-session", methods=["POST"])
+@limiter.limit("10 per minute")
+def create_checkout_session():
+    if not STRIPE_SECRET_KEY:
+        return jsonify({"error": "Stripe is not configured."}), 503
+
+    data = request.get_json(silent=True) or {}
+    purchase_type = (data.get("type") or "").upper()
+    quantity = 1
+
+    if purchase_type == "LED":
+        price_id = STRIPE_PRICE_ID_LED
+        try:
+            slot_id = int(data.get("slot_id"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid LED slot."}), 400
+        if not (0 <= slot_id < LED_SLOTS):
+            return jsonify({"error": "Invalid LED slot."}), 400
+
+        fields, err = validate_sponsor_fields(
+            data.get("custom_text"), data.get("custom_link"), data.get("color"),
+        )
+        if err:
+            return jsonify({"error": err}), 400
+
+        with get_db() as conn:
+            expire_stale_sponsorships(conn)
+            led = conn.execute(
+                "SELECT owner_username FROM leds WHERE slot = ?", (slot_id,),
+            ).fetchone()
+            if led and led["owner_username"]:
+                return jsonify({"error": "This LED slot is already taken."}), 409
+
+        metadata = {
+            "type": "LED",
+            "slot_id": str(slot_id),
+            "custom_text": fields["custom_text"],
+            "custom_link": fields["custom_link"],
+            "color": fields["color"],
+        }
+
+    elif purchase_type == "PRO":
+        price_id = STRIPE_PRICE_ID_PRO
+        fields, err = validate_sponsor_fields(data.get("custom_text"), data.get("custom_link"))
+        if err:
+            return jsonify({"error": err}), 400
+
+        try:
+            days = int(data.get("days", 1))
+        except (TypeError, ValueError):
+            days = 1
+        days = max(1, min(days, 7))
+
+        with get_db() as conn:
+            if is_paid_pro_active(conn):
+                return jsonify({"error": "PRO Sponsor spot is already taken."}), 409
+
+        metadata = {
+            "type": "PRO",
+            "custom_text": fields["custom_text"],
+            "custom_link": fields["custom_link"],
+            "days": str(days),
+        }
+        quantity = days
+
+    else:
+        return jsonify({"error": "Invalid purchase type."}), 400
+
+    if not price_id:
+        return jsonify({"error": "Stripe price ID is not configured."}), 503
+
+    success_url = (
+        url_for("index", _external=True)
+        + "?payment=success&session_id={CHECKOUT_SESSION_ID}"
+    )
+
+    try:
+        line_items = [{"price": price_id, "quantity": quantity if purchase_type == "PRO" else 1}]
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=line_items,
+            mode="payment",
+            success_url=success_url,
+            cancel_url=url_for("index", _external=True) + "?payment=cancelled",
+            metadata=metadata,
+        )
+        return jsonify({"url": checkout_session.url})
+    except stripe.StripeError as e:
+        logger.error("Stripe checkout error: %s", e)
+        return jsonify({"error": "Payment service unavailable. Please try again later."}), 502
+
+
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+    if not STRIPE_WEBHOOK_SECRET:
+        return jsonify({"error": "Webhook secret not configured."}), 503
+
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError:
+        logger.warning("Webhook: invalid payload")
+        return jsonify({"error": "Invalid payload."}), 400
+    except stripe.SignatureVerificationError:
+        logger.warning("Webhook: invalid signature")
+        return jsonify({"error": "Invalid signature."}), 400
+
+    if event.type == "checkout.session.completed":
+        checkout_session = event.data.object
+        activate_from_stripe_session(checkout_session)
+
+    return jsonify({"received": True}), 200
 
 
 @app.errorhandler(429)
@@ -341,6 +734,7 @@ def check_pixel():
 
 
 init_db()
+debug_print_winning_pixel()
 
 if __name__ == "__main__":
     app.run(debug=True)
