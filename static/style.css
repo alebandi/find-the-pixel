@@ -118,10 +118,10 @@ body {
   display: none;
   width: 100%;
   max-width: 360px;
-  margin-top: 8px;
+  margin-top: 30px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .ad-banner-left,
   .ad-banner-right {
     display: none;
