@@ -697,6 +697,16 @@ h1 {
   opacity: 1;
 }
 
+#overlay-closed .modal-closed h2 {
+  font-size: 2rem;
+}
+
+.winner-detail {
+  font-size: 0.95rem;
+  color: var(--accent);
+  margin-top: 0.25rem;
+}
+
 .led.owned.gold,
 .led.owned.azure,
 .led.owned.violet {

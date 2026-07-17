@@ -11,7 +11,8 @@
       data-clicks-left="{{ clicks_left }}"
       data-user-email="{{ user_email }}"
       data-prize="{{ current_prize }}"
-      data-leds="{{ leds_json }}">
+      data-leds="{{ leds_json }}"
+      data-game-active="{{ 'true' if game_active else 'false' }}">
   <div class="page-layout">
     <aside class="ad-banner ad-banner-left" aria-label="Left advertisement">
       <p class="ad-label">Advertisement</p>
@@ -106,6 +107,18 @@
   </aside>
 
   <div id="tooltip"></div>
+
+  <!-- Contest closed overlay (shown when game_active == false) -->
+  <div id="overlay-closed" class="overlay">
+    <div class="modal modal-closed">
+      <h2>🏆 Contest Closed!</h2>
+      <p>We have a winner. Check back soon for more contests!</p>
+      {% if winner_info %}
+      <p class="winner-detail">Winner: <strong>{{ winner_info.email }}</strong></p>
+      <p class="winner-detail">Time: <strong>{{ winner_info.timestamp }}</strong></p>
+      {% endif %}
+    </div>
+  </div>
 
   <!-- Referral popup (logged-in users out of clicks) -->
   <div id="overlay-referral" class="overlay">

@@ -1,6 +1,7 @@
 const GRID_SIZE = parseInt(document.body.dataset.gridSize, 10);
 const REF_CODE = document.body.dataset.refCode;
 const USER_EMAIL = document.body.dataset.userEmail;
+const GAME_ACTIVE = document.body.dataset.gameActive === 'true';
 const grid = document.getElementById('grid');
 const gridWrapper = document.getElementById('grid-wrapper');
 const tooltip = document.getElementById('tooltip');
@@ -10,6 +11,7 @@ const userInfoEl = document.getElementById('user-info');
 const overlayReferral = document.getElementById('overlay-referral');
 const overlayLogin = document.getElementById('overlay-login');
 const overlaySponsor = document.getElementById('overlay-sponsor');
+const overlayClosed = document.getElementById('overlay-closed');
 const loginMessageEl = document.getElementById('login-message');
 const loginErrorEl = document.getElementById('login-error');
 const refLinkEl = document.getElementById('ref-link');
@@ -25,6 +27,15 @@ const sponsorColorInput = document.getElementById('sponsor-color');
 const sponsorColorHex = document.getElementById('sponsor-color-hex');
 let gameOver = false;
 let pendingCheckout = null;
+
+// If the contest is closed, show the overlay and disable clicks immediately
+if (!GAME_ACTIVE) {
+  gameOver = true;
+  if (overlayClosed) {
+    overlayClosed.classList.add('visible');
+  }
+  message.textContent = '🔒 Contest Closed! We have a winner. Check back soon for more contests!';
+}
 
 clicksLeftEl.textContent = document.body.dataset.clicksLeft;
 grid.style.gridTemplateColumns = 'repeat(' + GRID_SIZE + ', 1fr)';

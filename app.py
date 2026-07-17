@@ -4,9 +4,11 @@ import logging
 import os
 import random
 import re
+import smtplib
 import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
+from email.mime.text import MIMEText
 
 import stripe
 from authlib.integrations.flask_client import OAuth
@@ -47,6 +49,12 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 stripe.api_key = STRIPE_SECRET_KEY
 
 ADMIN_RESET_KEY = os.getenv("ADMIN_RESET_KEY")
+
+# SMTP settings for winner notification email
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+
 SPONSOR_DURATION = timedelta(hours=24)
 DEFAULT_LED_COLORS = ["gold", "azure", "violet"]
 HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -108,6 +116,87 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def is_game_active():
+    """Check the game_state table to see if the contest is still open."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM game_state WHERE key = 'game_active'"
+        ).fetchone()
+        if row is None:
+            return True  # default: game is active
+        return row["value"] == "1"
+
+
+def set_game_active(active):
+    """Set game_active in the game_state table."""
+    val = "1" if active else "0"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO game_state (key, value) VALUES ('game_active', ?)",
+            (val,),
+        )
+    if not active:
+        logger.info("🏆 GAME CLOSED — a winner has been recorded.")
+
+
+def get_winner_info():
+    """Return winner email and timestamp, or None if no winner yet."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM game_state WHERE key = 'winner_email'"
+        ).fetchone()
+        winner_email = row["value"] if row else None
+        row = conn.execute(
+            "SELECT value FROM game_state WHERE key = 'winner_timestamp'"
+        ).fetchone()
+        winner_ts = row["value"] if row else None
+        if winner_email and winner_ts:
+            return {"email": winner_email, "timestamp": winner_ts}
+        return None
+
+
+def record_winner(email):
+    """Save winner info and close the game."""
+    now = utc_now_iso()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO game_state (key, value) VALUES ('winner_email', ?)",
+            (email,),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO game_state (key, value) VALUES ('winner_timestamp', ?)",
+            (now,),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO game_state (key, value) VALUES ('game_active', '0')",
+        )
+    logger.info("🏆 WINNER RECORDED: email=%s at %s", email, now)
+
+    # Send notification email to admin
+    if SMTP_EMAIL and SMTP_PASSWORD and ADMIN_EMAIL:
+        try:
+            msg = MIMEText(
+                f"A winner has been found!\n\n"
+                f"Email: {email}\n"
+                f"Timestamp: {now}\n"
+                f"Prize: {CURRENT_PRIZE}\n"
+                f"Winning pixel: X={winning_coordinate['x']}, Y={winning_coordinate['y']}\n"
+            )
+            msg["Subject"] = f"🏆 Pixel Contest Winner — {email}"
+            msg["From"] = SMTP_EMAIL
+            msg["To"] = ADMIN_EMAIL
+
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(SMTP_EMAIL, SMTP_PASSWORD)
+                server.send_message(msg)
+            logger.info("Winner notification email sent to %s", ADMIN_EMAIL)
+        except Exception as e:
+            logger.error("Failed to send winner notification email: %s", e)
+    else:
+        logger.warning("SMTP not configured — winner notification email not sent.")
 
 
 def init_db():
@@ -174,6 +263,16 @@ def init_db():
                 processed_at TEXT NOT NULL
             )
         """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS game_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT OR IGNORE INTO game_state (key, value) VALUES ('game_active', '1')"
+        )
 
 
 def reset_led_slot(conn, slot):
@@ -442,6 +541,9 @@ def index():
     elif request.args.get("payment_success") == "0":
         payment_notice = "Payment received, but sponsorship activation failed. Contact support."
 
+    game_active = is_game_active()
+    winner_info = get_winner_info()
+
     ip = get_client_ip()
     with get_db() as conn:
         user = get_or_create_user(conn, ip)
@@ -475,6 +577,8 @@ def index():
         ref_code=user["ref_code"],
         user_email=session.get("email", ""),
         payment_notice=payment_notice,
+        game_active=game_active,
+        winner_info=winner_info,
     )
 
 
@@ -527,6 +631,13 @@ def auth_google_callback():
 
     session["email"] = email
     session["google_id"] = google_id
+
+    # Check if this user just won — pending_win flag set by /check_pixel
+    if session.pop("pending_win", False):
+        logger.info("🏆 Winning user authenticated: %s. Recording winner & closing game.", email)
+        record_winner(email)
+        return redirect(url_for("index", winner="1"))
+
     return redirect(url_for("index"))
 
 
@@ -665,6 +776,14 @@ def rate_limit_exceeded(e):
 @app.route("/check_pixel", methods=["POST"])
 @limiter.limit("5 per minute")
 def check_pixel():
+    # Block clicks if the game is closed
+    if not is_game_active():
+        return jsonify({
+            "allowed": False,
+            "win": False,
+            "message": "🔒 Contest Closed! We have a winner. Check back soon for more contests!",
+        }), 403
+
     data = request.get_json(silent=True) or {}
     try:
         x = int(data.get("x"))
@@ -719,6 +838,8 @@ def check_pixel():
     is_winner = x == winning_coordinate["x"] and y == winning_coordinate["y"]
 
     if is_winner and not logged_in:
+        # Set a flag in the session so that after Google login we know to record the win
+        session["pending_win"] = True
         return jsonify({
             "allowed": True,
             "require_login": True,
@@ -728,6 +849,9 @@ def check_pixel():
         })
 
     if is_winner:
+        # Logged-in user clicked the winning pixel — record immediately
+        logger.info("🏆 Logged-in user hit the winning pixel: email=%s", session.get("email"))
+        record_winner(session.get("email", "unknown"))
         return jsonify({
             "allowed": True,
             "require_login": False,
@@ -761,6 +885,26 @@ def admin_reset_sponsors():
 
     force_reset_all_sponsors()
     return jsonify({"status": "ok", "message": "All sponsors have been reset to defaults."}), 200
+
+
+@app.route("/admin/reset-game", methods=["POST"])
+def admin_reset_game():
+    """Reopen the game (set game_active back to 1) and clear winner info.
+    Requires X-Admin-Key header matching ADMIN_RESET_KEY."""
+    if not ADMIN_RESET_KEY:
+        return jsonify({"error": "Admin reset is not configured (ADMIN_RESET_KEY not set)."}), 503
+
+    key = request.headers.get("X-Admin-Key", "")
+    if key != ADMIN_RESET_KEY:
+        return jsonify({"error": "Forbidden"}), 403
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO game_state (key, value) VALUES ('game_active', '1')"
+        )
+        conn.execute("DELETE FROM game_state WHERE key IN ('winner_email', 'winner_timestamp')")
+    logger.info("GAME RESET: contest reopened, winner info cleared.")
+    return jsonify({"status": "ok", "message": "Game has been reopened."}), 200
 
 
 init_db()
